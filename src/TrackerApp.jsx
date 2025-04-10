@@ -11,11 +11,38 @@ import {
   TabsContent,
 } from "@/components/ui/tabs";
 
-const EVENT_TYPES = ["Sleeping", "Pumping", "Breastfeeding"];
 const EVENT_COLORS = {
   Sleeping: "bg-purple-500",
   Pumping: "bg-green-500",
   Breastfeeding: "bg-pink-500",
+};
+
+const EVENT_UNITS = {
+  duration: {
+    hours: "hrs",
+    minutes: "min",
+  },
+  volume: {
+    ml: "ml",
+  },
+};
+
+const defaultPrototypes = {
+  Sleeping: [
+    { name: "start", label: "Start Time", type: "datetime-local" },
+    { name: "duration", label: "Duration (hour)", type: "number", unit: EVENT_UNITS.duration.hours }
+  ],
+  Pumping: [
+    { name: "start", label: "Start Time", type: "datetime-local" },
+    { name: "volume", label: "Volume (ml)", type: "range", min: 0, max: 200, step: 5, unit: EVENT_UNITS.volume.ml },
+    { name: "side", label: "Side", type: "select", options: ["Both", "Left", "Right"] },
+    { name: "duration", label: "Duration (min)", type: "number", unit: EVENT_UNITS.duration.minutes }
+  ],
+  Breastfeeding: [
+    { name: "start", label: "Start Time", type: "datetime-local" },
+    { name: "side", label: "Side", type: "select", options: ["Both", "Left", "Right"] },
+    { name: "duration", label: "Duration (min)", type: "number", unit: EVENT_UNITS.duration.minutes }
+  ],
 };
 
 const getEventColorClass = (type) => {
@@ -31,6 +58,18 @@ const getCustomEventTypes = () => {
     return stored ? JSON.parse(stored) : [];
   } catch (e) {
     return [];
+  }
+};
+
+// Utility function to convert duration input to seconds
+const convertToSeconds = (duration, unit) => {
+  switch (unit) {
+    case EVENT_UNITS.duration.hours:
+      return duration * 3600; // 1 hour = 3600 seconds
+    case EVENT_UNITS.duration.minutes:
+      return duration * 60;   // 1 minute = 60 seconds
+    default:
+      return duration;        // Assume input is already in seconds
   }
 };
 
@@ -53,12 +92,13 @@ export default function TrackerApp() {
   const [duration, setDuration] = useState(0);
   const todayRef = useRef(null);
 
+  // Initialize the input fields
   const startEvent = (type) => {
     if (currentEvent) return;
     const now = new Date();
     setCurrentEvent({ type });
     setStartTime(now);
-    setDuration(0);
+    setDuration(duration);
     setVolume(lastVolume);
     setSide("Both");
   };
@@ -66,16 +106,14 @@ export default function TrackerApp() {
   const endEvent = () => {
     if (!currentEvent) return;
     const start = new Date(startTime);
-    const calculatedDuration = duration * 60 || Math.round((new Date() - start) / 1000);
-    const end = new Date(start.getTime() + calculatedDuration * 1000);
+    const calculatedDuration = duration || Math.round((new Date() - start) / 1000);
 
     const finishedEvent = {
-      ...currentEvent,
+      ...currentEvent, // only type is present
       start,
-      end,
       duration: calculatedDuration,
-      volume: ["Pumping", "Breastfeeding"].includes(currentEvent.type) ? volume : null,
-      side: ["Pumping", "Breastfeeding"].includes(currentEvent.type) ? side : null,
+      volume: getEventPrototype(currentEvent.type).some(input => input.name === "volume") ? volume : null,
+      side: getEventPrototype(currentEvent.type).some(input => input.name === "side") ? side : null,
     };
 
     const updatedEvents = [...events];
@@ -102,7 +140,7 @@ export default function TrackerApp() {
   const handleEdit = (event, index) => {
     setCurrentEvent({ type: event.type });
     setStartTime(new Date(event.start));
-    setDuration(Math.round(event.duration / 60));
+    setDuration(event.duration || 0);
     setVolume(event.volume ?? lastVolume);
     setSide(event.side ?? "Both");
     setEditIndex(index);
@@ -131,7 +169,6 @@ export default function TrackerApp() {
         const parsed = data.map((e) => ({
           ...e,
           start: new Date(e.start),
-          end: new Date(e.end),
           duration: Number(e.duration),
           volume: e.volume ? Number(e.volume) : null,
         }));
@@ -145,43 +182,28 @@ export default function TrackerApp() {
 
   const getDailySummary = (events) => {
     const summary = {
-      sleepMinutes: 0,
+      sleepingDuration: 0,
       pumpingCount: 0,
       pumpingVolume: 0,
       breastfeedingCount: 0,
-      breastfeedingMinutes: 0,
+      breastfeedingDuration: 0,
+      progress: 0,
     };
     for (let e of events) {
-      if (e.type === "Sleeping") summary.sleepMinutes += Math.round(e.duration / 60);
+      if (e.type === "Sleeping") summary.sleepingDuration += e.duration;
       if (e.type === "Pumping") {
         summary.pumpingCount++;
         summary.pumpingVolume += e.volume || 0;
       }
       if (e.type === "Breastfeeding") {
         summary.breastfeedingCount++;
-        summary.breastfeedingMinutes += Math.round(e.duration / 60);
+        summary.breastfeedingDuration += e.duration;
       }
     }
     return summary;
   };
 
-  const getEventSettings = (type) => {
-    const defaultPrototypes = {
-      Sleeping: [
-        { name: "duration", label: "Duration (min)", type: "number" }
-      ],
-      Pumping: [
-        { name: "volume", label: "Volume (ml)", type: "range", min: 0, max: 200, step: 10 },
-        { name: "side", label: "Side", type: "select", options: ["Both", "Left", "Right"] },
-        { name: "duration", label: "Duration (min)", type: "number" }
-      ],
-      Breastfeeding: [
-        { name: "volume", label: "Volume (ml)", type: "range", min: 0, max: 200, step: 10 },
-        { name: "side", label: "Side", type: "select", options: ["Both", "Left", "Right"] },
-        { name: "duration", label: "Duration (min)", type: "number" }
-      ],
-    };
-  
+  const getEventPrototype = (type) => {
     const customSettings = JSON.parse(localStorage.getItem("customEventSettings") || "{}");
     const base = defaultPrototypes[type] || [];
     const custom = customSettings[type];
@@ -206,17 +228,53 @@ export default function TrackerApp() {
       out.push({ name: "side", label: "Side", type: "select", options: ["Both", "Left", "Right"] });
     }
     return out;
-   
-    if (["Pumping", "Breastfeeding"].includes(type)) return { volume: true, duration: true };
-    const settings = JSON.parse(localStorage.getItem("customEventSettings") || "{}");
-    return settings[type] || defaults;
+  };
+
+  /**
+   * Finds the unit for a specific input field based on event type and input name
+   * @param {string} eventType - The type of the event (e.g., "Sleeping", "Pumping")
+   * @param {string} inputName - The name of the input field (e.g., "duration", "volume")
+   * @returns {string} The unit string or empty string if not found
+   */
+  const getInputUnit = (eventType, inputName) => {
+    const prototype = getEventPrototype(eventType);
+    const inputField = prototype.find(input => input.name === inputName);
+    return inputField && inputField.unit ? inputField.unit : '';
+  };
+
+  // Function to convert seconds to a display format
+  const formatDuration = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    if (hours > 0) {
+      return `${hours} hr${hours > 1 ? 's' : ''} ${minutes % 60} min`;
+    }
+    return `${minutes} min`;
+  };
+
+  const handleDurationChange = (e) => {
+    const inputDuration = parseInt(e.target.value, 10);
+    const unit = getInputUnit(currentEvent.type, "duration");
+    const durationInSeconds = convertToSeconds(inputDuration, unit);
+    setDuration(durationInSeconds);
+  };
+
+  const getDurationInUnit = (duration, unit) => {
+    switch (unit) {
+      case EVENT_UNITS.duration.hours:
+        return duration / 3600;
+      case EVENT_UNITS.duration.minutes:
+        return duration / 60;
+      default:
+        return duration;
+    }
   };
 
   const renderTrackerTab = () => (
     <TabsContent value="track">
       <h1 className="text-xl font-bold mb-4">Breastfeeding Tracker</h1>
       <div className="grid grid-cols-3 gap-2 mb-4">
-        {EVENT_TYPES.map((type) => (
+        {Object.keys(defaultPrototypes).map((type) => (
           <Button key={type} onClick={() => startEvent(type)} disabled={!!currentEvent}>{type}</Button>
         ))}
       </div>
@@ -224,57 +282,81 @@ export default function TrackerApp() {
         <div className="mb-4">
           <Card className="shadow-md">
             <CardContent className="p-4 space-y-4">
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Start Time</label>
-                <input
-                  type="datetime-local"
-                  value={startTime.toISOString().slice(0, 16)}
-                  onChange={(e) => setStartTime(new Date(e.target.value))}
-                  className="border rounded px-2 py-1 w-full text-xs"
-                />
-              </div>
               <div className="flex justify-between items-center">
                 <div className="text-sm font-medium">
                   {editIndex !== null ? `Editing: ${currentEvent.type}` : `Recording: ${currentEvent.type}`}
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => { setCurrentEvent(null); setEditIndex(null); }}>✖ Cancel</Button>
               </div>
-              {getEventSettings(currentEvent.type).map((input) => (
+              {getEventPrototype(currentEvent.type).map((input) => (
                 <div key={input.name}>
-                  {input.type === "number" && (
-                    <input
-                      type="number"
-                      min="0"
-                      value={input.name === "duration" ? duration : volume}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10);
-                        input.name === "duration" ? setDuration(val) : setVolume(val);
-                      }}
-                      className="border rounded px-2 py-1 w-full text-xs"
-                      placeholder={input.label}
-                    />
+                  {input.type === "datetime-local" && (
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">{input.label}</label>
+                      <input
+                        type="datetime-local"
+                        value={startTime.toISOString().slice(0, 16)}
+                        onChange={(e) => setStartTime(new Date(e.target.value))}
+                        className="border rounded px-2 py-1 w-full text-xs"
+                      />
+                    </div>
                   )}
+                  {input.type === "number" && input.name === "duration" && (
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">{input.label}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={getDurationInUnit(duration, getInputUnit(currentEvent.type, "duration"))}
+                        onChange={handleDurationChange}
+                        className="border rounded px-2 py-1 w-full text-xs"
+                        placeholder={input.label}
+                      />
+                    </div>
+                  )}
+                  {input.type === "number" && input.name === "volume" && (
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">{input.label}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={volume}
+                        onChange={(e) => setVolume(parseInt(e.target.value, 10))}
+                        className="border rounded px-2 py-1 w-full text-xs"
+                        placeholder={input.label}
+                      />
+                    </div>
+                  )}
+                  
                   {input.type === "range" && (
-                    <input
-                      type="range"
-                      min={input.min}
-                      max={input.max}
-                      step={input.step}
-                      value={volume}
-                      onChange={(e) => setVolume(parseInt(e.target.value, 10))}
-                      className="w-full"
-                    />
+                    <div>
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs text-gray-600">{input.label}</label>
+                        <span className="text-xs font-medium">{volume} {getInputUnit(currentEvent.type, "volume")}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={input.min}
+                        max={input.max}
+                        step={input.step}
+                        value={volume}
+                        onChange={(e) => setVolume(parseInt(e.target.value, 10))}
+                        className="w-full"
+                      />
+                    </div>
                   )}
                   {input.type === "select" && (
-                    <select
-                      value={side}
-                      onChange={(e) => setSide(e.target.value)}
-                      className="border rounded px-2 py-1 w-full text-xs"
-                    >
-                      {input.options.map((opt) => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">{input.label}</label>
+                      <select
+                        value={side}
+                        onChange={(e) => setSide(e.target.value)}
+                        className="border rounded px-2 py-1 w-full text-xs">
+                        {input.options.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
                   )}
                 </div>
               ))}
@@ -287,25 +369,14 @@ export default function TrackerApp() {
       <div className="space-y-6 border-l border-gray-300 pl-6">
         {Object.entries(groupedEvents).map(([date, dailyEvents]) => {
           const summary = getDailySummary(dailyEvents);
-          const chartData = [
-            { name: "Sleep", minutes: summary.sleepMinutes },
-            { name: "Pump", minutes: summary.pumpingVolume },
-            { name: "BF", minutes: summary.breastfeedingMinutes },
-          ];
+          
           return (
             <div key={date} ref={date === format(new Date(), "yyyy-MM-dd") ? todayRef : null}>
               <div className="text-sm text-gray-700 font-semibold mb-1">{format(parseISO(date), "PPP")}</div>
               <div className="text-xs text-gray-500 mb-2">
-                Sleep: {Math.round(summary.sleepMinutes / 60 * 10) / 10} hrs • Pumping: {summary.pumpingCount}x, {summary.pumpingVolume}ml • Breastfeeding: {summary.breastfeedingCount}x, {summary.breastfeedingMinutes} min
+               Sleep: {getDurationInUnit(summary.sleepingDuration, EVENT_UNITS.duration.hours)} hrs • Pumping: {summary.pumpingCount}x, {summary.pumpingVolume}ml • Breastfeeding: {summary.breastfeedingCount}x, {getDurationInUnit(summary.breastfeedingDuration, EVENT_UNITS.duration.minutes)} min
               </div>
-              <ResponsiveContainer width="100%" height={100}>
-                <BarChart data={chartData} layout="vertical">
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="name" type="category" width={60} />
-                  <Tooltip />
-                  <Bar dataKey="minutes" fill="#8884d8" radius={[4, 4, 4, 4]} />
-                </BarChart>
-              </ResponsiveContainer>
+              
               <div className="space-y-4 mt-3">
                 {dailyEvents.map((e) => (
                   <div key={e.idx} className="relative flex items-start gap-2">
@@ -314,8 +385,8 @@ export default function TrackerApp() {
                     <div className="flex-1 text-sm">
                       <div className="font-medium">{e.type}</div>
                       <div className="text-xs text-gray-500">
-                        {Math.round(e.duration / 60)} min
-                        {e.volume != null && ` • ${e.volume}ml`} {e.side && ` • ${e.side}`}
+                        {formatDuration(e.duration)}
+                        {e.volume != null && ` • ${e.volume} ${getInputUnit(e.type, "volume")}`} {e.side && ` • ${e.side}`}
                       </div>
                     </div>
                     <div className="space-x-1">
@@ -344,7 +415,7 @@ export default function TrackerApp() {
                 const summary = getDailySummary(dailyEvents);
                 return {
                   date: format(parseISO(date), "MM/dd"),
-                  value: Math.round(summary.sleepMinutes / 60 * 10) / 10,
+                  value: getDurationInUnit(summary.sleepingDuration, EVENT_UNITS.duration.hours),
                 };
               })}
             >
@@ -382,7 +453,7 @@ export default function TrackerApp() {
                 const summary = getDailySummary(dailyEvents);
                 return {
                   date: format(parseISO(date), "MM/dd"),
-                  value: summary.breastfeedingMinutes,
+                  value: getDurationInUnit(summary.breastfeedingDuration, EVENT_UNITS.duration.minutes),
                 };
               })}
             >
@@ -460,7 +531,7 @@ export default function TrackerApp() {
 
         <Button onClick={() => {
           const name = newEventType.trim();
-          if (!name || EVENT_TYPES.includes(name)) return;
+          if (!name || Object.keys(defaultPrototypes).includes(name) || customEventTypes.includes(name)) return;
           const settingsMap = JSON.parse(localStorage.getItem("customEventSettings") || "{}");
           settingsMap[name] = { volume: newEventVolume, duration: newEventDuration, customInputs };
           localStorage.setItem("customEventSettings", JSON.stringify(settingsMap));
